@@ -5,6 +5,7 @@ import matplotlib.pyplot as plt
 import numpy as np
 import os
 import random
+from scipy import ndimage
 import time
 
 # ToDo: Have them be able to look into ALL directions, not just Up Down Left Right!
@@ -20,11 +21,15 @@ class Ant():
         :type y:
         :param map_size:
         :type map_size:
-        :param orientation:
-        :type orientation:
+        :param orientation: TL, T, TR, L, R, BL, B, BR
+        :type orientation: str
         :param p_keep_orientation:
         :type p_keep_orientation:
         """
+        self.possible_orientations = ('TL', 'T', 'TR',
+                                      'L', 'R',
+                                      'BL', 'B', 'BR')
+
         # If no coords provided, select at random
         if x is None and y is None:
             self.x = random.randint(0, map_size[0] - 1)  # -1 because it's inclusive and e.g. 0-99 = 100
@@ -34,7 +39,7 @@ class Ant():
             self.y = y
         # If no orientation provided, select at random
         if orientation is None:
-            self.orientation = random.sample(['up', 'down', 'left', 'right'], 1)[0]
+            self.orientation = random.choice(self.possible_orientations)
         else:
             self.orientation = orientation
         self.map_size = map_size
@@ -43,10 +48,15 @@ class Ant():
     def get_possible_target_fields(self):
         logging.info(f'Current coordinate (x, y): {self.x, self.y}')
         logging.info(f'Current orientation: {self.orientation}')
-        ant_moves = {'up': ((-1, -1), (0, -1), (1, -1)),
-                     'down': ((-1, 1), (0, 1), (1, 1)),
-                     'left': ((-1, -1), (-1, 0), (-1, 1)),
-                     'right': ((1, -1), (1, 0), (1, 1))}  # Note that y INCREASES downward
+        ant_moves = {'TL': ((-1, 0), (-1, -1), (0, -1)),  # Note that y INCREASES downward
+                     'T': ((-1, -1), (0, -1), (1, -1)),
+                     'TR': ((0, -1), (1, -1), (1, 0)),
+                     'R': ((1, -1), (1, 0), (1, 1)),
+                     'BR': ((1, 0), (1, 1), (0, 1)),
+                     'B': ((-1, 1), (0, 1), (1, 1)),
+                     'BL': ((-1, 0), (-1, 1), (0, 1)),
+                     'L': ((-1, -1), (-1, 0), (-1, 1))
+                     }
         possible_moves = ant_moves[self.orientation]
         target_fields = []
 
@@ -66,15 +76,14 @@ class Ant():
     def move(self):
         targets = self.get_possible_target_fields()
         logging.debug(f'Target fields: {targets} - {type(targets)}')
-        self.x, self.y = random.sample(targets, 1)[0]  # [0], else the results ist still list
+        self.x, self.y = random.choice(targets)
         logging.info(f'New position: {self.x, self.y}')
 
         # Check if ant changes orientation: # ToDo: update this when scent trails are implemented.
         if random.random() > self.p_keep_orientation:
-            options = ['up', 'down', 'left', 'right']
+            options = list(self.possible_orientations)
             options.remove(self.orientation)
-            self.orientation = random.sample(options, 1)[0]
-            # This needed [0], else the results ist still list
+            self.orientation = random.choice(options)
 
         logging.info(f'New orientation: {self.orientation}')
 
@@ -83,7 +92,7 @@ class Ant():
 
 
 class Map():
-    def __init__(self, ants, map_size, decay_rate=0.005):
+    def __init__(self, ants, map_size, decay_rate=0.005, spread_rate=0.1):
         self.ants = ants
         self.map = np.zeros((map_size[1], map_size[0]))
         for ant in ants:
@@ -92,6 +101,7 @@ class Map():
             self.map[_y, _x] = 1
         logging.info(f'Map shape: {self.map.shape}')
         self.decay_rate = decay_rate
+        self.spread_rate = spread_rate
 
     def show(self):
         plt.imshow(self.map, cmap='gray')
@@ -104,25 +114,53 @@ class Map():
         print(self.map)
 
     def next_gen(self):
-        self.map = np.subtract(self.map, self.decay_rate, out=self.map, where=self.map > 0)
+        # Decay the ant trails
+        np.subtract(self.map, self.decay_rate, out=self.map, where=self.map > 0)
+        # Blur trails
+        ndimage.gaussian_filter(self.map, sigma=self.spread_rate, output=self.map)
+        # Move each ant:
         for ant in self.ants:
             ant.move()
             self.map[ant.y, ant.x] = 1
 
 
-def create_ants(ant_count, map_size):
+def create_ants(ant_count, map_size, p_keep_orientation=0.97):
     ant_list = []
     for i in range(ant_count):
-        ant_list.append(Ant(map_size=map_size))
+        ant_list.append(Ant(map_size=map_size, p_keep_orientation=p_keep_orientation))
     logging.debug(f'Ants: {ant_list}')
     [logging.debug(ant.x, ant.y) for ant in ant_list]
     return ant_list
 
 
-def run_simulation(ant_count, map_size, generations=None, plot_images=False, save_images=False, return_stack=False):
+def run_simulation(ant_count, map_size, generations=None, plot_images=False, save_images=False, return_stack=False,
+                   decay_rate=0.005, p_keep_orientation=0.97, spread_rate=0.1):
+    """
+
+    :param ant_count: Number of ants
+    :type ant_count: int
+    :param map_size: Map size (x, y)
+    :type map_size: tuple
+    :param generations: number of steps to simulate
+    :type generations: int
+    :param plot_images: Show plots (True/False)
+    :type plot_images: bool
+    :param save_images: Save rendered images (True/False)
+    :type save_images: bool
+    :param return_stack: Return generations as a 3D stack (can easily use up all memory)
+    :type return_stack: bool
+    :param decay_rate: Rate of decay of ant trails (0-1)
+    :type decay_rate: float
+    :param p_keep_orientation: Probability that an ant will keep its orientation in the next generation (0-1)
+    :type p_keep_orientation: float
+    :param spread_rate: Amount of blurring the trails experience (sigma in gaussian filter) (0-1)
+    :type spread_rate: float
+    :return:
+    :rtype:
+    """
     print('Starting simulation.')
-    ants = create_ants(ant_count, map_size)
-    board = Map(ants, map_size)
+    ants = create_ants(ant_count, map_size, p_keep_orientation=p_keep_orientation)
+    board = Map(ants, map_size, decay_rate=decay_rate, spread_rate=spread_rate)
     save_path = os.getcwd() + '/renders'
 
     if return_stack:
@@ -136,7 +174,7 @@ def run_simulation(ant_count, map_size, generations=None, plot_images=False, sav
         try:
             os.mkdir(save_path)
         except FileExistsError:
-            input(f'Directory {save_path} already exists.\nContaining files will be overwritten. Continue?')
+            input(f'Directory {save_path} already exists.\nContaining files will be overwritten. Continue? [ENTER]')
 
             board.save('renders/gen_0.png')
     if return_stack:
@@ -162,11 +200,11 @@ def run_simulation(ant_count, map_size, generations=None, plot_images=False, sav
 
 
 if __name__ == '__main__':
-
-    import concurrent.futures
     import logging
     logging.basicConfig(level=logging.INFO, format='[%(levelname)s]\t%(message)s')
     logging.disable()
 
     # stack = run_simulation(ant_count=150, map_size=(1000, 1000), generations=250, save_images=True)
-    run_simulation(ant_count=250, map_size=(640, 480), generations=500, save_images=True)
+    run_simulation(ant_count=250, map_size=(640, 480), generations=500,
+                   save_images=True,
+                   decay_rate=0.00075, p_keep_orientation=0.85, spread_rate=0.4)

@@ -8,19 +8,17 @@ import random
 from scipy import ndimage
 import time
 
-# ToDo: Have them be able to look into ALL directions, not just Up Down Left Right!
-
 
 class Ant():
     def __init__(self, x=None, y=None, map_size=None, orientation=None, p_keep_orientation=0.97):
         """
 
-        :param x:
-        :type x:
-        :param y:
-        :type y:
-        :param map_size:
-        :type map_size:
+        :param x: X coordinate
+        :type x: int
+        :param y: Y coordinate
+        :type y: int
+        :param map_size: (x, y)
+        :type map_size: tuple
         :param orientation: TL, T, TR, L, R, BL, B, BR
         :type orientation: str
         :param p_keep_orientation:
@@ -29,6 +27,15 @@ class Ant():
         self.possible_orientations = ('TL', 'T', 'TR',
                                       'L', 'R',
                                       'BL', 'B', 'BR')
+        self.all_possible_moves = {'TL': ((-1, 0), (-1, -1), (0, -1)),  # Note that y INCREASES downward
+                                   'T': ((-1, -1), (0, -1), (1, -1)),
+                                   'TR': ((0, -1), (1, -1), (1, 0)),
+                                   'R': ((1, -1), (1, 0), (1, 1)),
+                                   'BR': ((1, 0), (1, 1), (0, 1)),
+                                   'B': ((-1, 1), (0, 1), (1, 1)),
+                                   'BL': ((-1, 0), (-1, 1), (0, 1)),
+                                   'L': ((-1, -1), (-1, 0), (-1, 1))
+                                   }
 
         # If no coords provided, select at random
         if x is None and y is None:
@@ -45,45 +52,52 @@ class Ant():
         self.map_size = map_size
         self.p_keep_orientation = p_keep_orientation
 
+    def move_is_valid(self, position, move):
+        target = (position[0] + move[0], position[1] + move[1])
+        if 0 <= target[0] <= (self.map_size[0] - 1) and 0 <= target[1] <= (self.map_size[1] - 1):
+            return True
+        else:
+            return False
+
     def get_possible_target_fields(self):
         logging.info(f'Current coordinate (x, y): {self.x, self.y}')
         logging.info(f'Current orientation: {self.orientation}')
-        ant_moves = {'TL': ((-1, 0), (-1, -1), (0, -1)),  # Note that y INCREASES downward
-                     'T': ((-1, -1), (0, -1), (1, -1)),
-                     'TR': ((0, -1), (1, -1), (1, 0)),
-                     'R': ((1, -1), (1, 0), (1, 1)),
-                     'BR': ((1, 0), (1, 1), (0, 1)),
-                     'B': ((-1, 1), (0, 1), (1, 1)),
-                     'BL': ((-1, 0), (-1, 1), (0, 1)),
-                     'L': ((-1, -1), (-1, 0), (-1, 1))
-                     }
-        possible_moves = ant_moves[self.orientation]
+
+        possible_moves = self.all_possible_moves[self.orientation]
         target_fields = []
 
         # Fill theoretical next fields based on orientation
-        for x_change, ychange in possible_moves:
-            new_target = (self.x + x_change, self.y + ychange)
-            # Verify new target is within map bounds:
-            if 0 <= new_target[0] <= (self.map_size[0] - 1) and 0 <= new_target[1] <= (self.map_size[1] - 1):
-                # -1 was because map_size is not zero indexing, but the rest is.
+        for move in possible_moves:
+            if self.move_is_valid((self.x, self.y), move):
+                new_target = (self.x + move[0], self.y + move[1])
                 target_fields.append(new_target)
         # If no valid target field in the orientation was found:
-        if len(target_fields) == 0:
+        if not target_fields:  # If there are none:
+            logging.debug("Staying")
             target_fields.append((self.x, self.y))
+            self.orientation = random.choice(self.possible_orientations)
         logging.debug(f'Possible targets: {target_fields} - {type(target_fields)}')
         return target_fields
 
-    def move(self):
+
+    def move(self, map):
+
+        # ToDo: Figure out how to prevent them from following their own scent.
         targets = self.get_possible_target_fields()
-        logging.debug(f'Target fields: {targets} - {type(targets)}')
-        self.x, self.y = random.choice(targets)
+        target_weights = [map[t[1], t[0]] for t in targets]
+        self.x, self.y = random.choices(population=tuple(targets), weights=target_weights)[0]
         logging.info(f'New position: {self.x, self.y}')
 
-        # Check if ant changes orientation: # ToDo: update this when scent trails are implemented.
+        # Check if ant changes orientation:
         if random.random() > self.p_keep_orientation:
-            options = list(self.possible_orientations)
-            options.remove(self.orientation)
-            self.orientation = random.choice(options)
+            orientation_options = []
+            orientation_weights = []
+            for orientation in self.possible_orientations:
+                for move in self.all_possible_moves[orientation]:
+                    if self.move_is_valid((self.x, self.y), move):
+                        orientation_options.append(orientation)
+                        orientation_weights.append(map[self.y + move[1], self.x + move[0]])
+            self.orientation = random.choices(orientation_options, orientation_weights)[0]
 
         logging.info(f'New orientation: {self.orientation}')
 
@@ -120,7 +134,7 @@ class Map():
         ndimage.gaussian_filter(self.map, sigma=self.spread_rate, output=self.map)
         # Move each ant:
         for ant in self.ants:
-            ant.move()
+            ant.move(map=self.map)
             self.map[ant.y, ant.x] = 1
 
 
@@ -183,7 +197,7 @@ def run_simulation(ant_count, map_size, generations=None, plot_images=False, sav
         generation_stack = board.map
 
     for gen in range(1, generations):
-        if gen % 10 == 0:
+        if gen % 25 == 0:
             print(f'Generation {gen} done.')
 
         board.next_gen()
@@ -201,10 +215,10 @@ def run_simulation(ant_count, map_size, generations=None, plot_images=False, sav
 
 if __name__ == '__main__':
     import logging
-    logging.basicConfig(level=logging.INFO, format='[%(levelname)s]\t%(message)s')
+    logging.basicConfig(level=logging.DEBUG, format='[%(levelname)s]\t%(message)s')
     logging.disable()
 
     # stack = run_simulation(ant_count=150, map_size=(1000, 1000), generations=250, save_images=True)
-    run_simulation(ant_count=250, map_size=(640, 480), generations=500,
+    run_simulation(ant_count=250, map_size=(640, 480), generations=3000,
                    save_images=True,
-                   decay_rate=0.00075, p_keep_orientation=0.85, spread_rate=0.4)
+                   decay_rate=0.00075, p_keep_orientation=0.50, spread_rate=0.4)
